@@ -1,0 +1,20 @@
+# Ignore Excel files
+*.xlsx
+*.xls
+
+# Ignore PNG images
+*.png
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore data directory
+data/
+
+# Ignore virtual environment
+.venv/
+
+# Ignore IDE settings
+.vscode/
+.idea/
