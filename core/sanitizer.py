@@ -13,32 +13,45 @@ class DataSanitizer:
     def clean(self):
         if self.df is None: return None
 
-        # 1. Mask PII
+        # 1. COLUMN NAME NORMALIZATION
+        # Prevents KeyErrors from trailing spaces in CSV headers
+        self.df.columns = [str(c).strip() for c in self.df.columns]
+
+        # 2. MASK PII
         self._mask_pii()
 
-        # 2. Target Encoding: Convert Binary Text to 0/1 (Crucial for Adult Dataset)
-        target = self.plan.get('target')
-        if target in self.df.columns and self.df[target].dtype == 'object':
-            unique_vals = self.df[target].dropna().unique()
-            if len(unique_vals) == 2:
-                # Map sorted values so the "higher" or "positive" one is 1
-                val_map = {val: i for i, val in enumerate(sorted(unique_vals))}
-                self.df[target] = self.df[target].map(val_map)
-                logger.info(f"Target Encoding applied to {target}: {val_map}")
-
-        # 3. Numeric Recovery & Cleaning
+        # 3. ENHANCED NUMERIC RECOVERY (PHASE 7)
         for col in self.df.columns:
             if self.df[col].dtype == 'object':
-                clean_series = self.df[col].astype(str).str.replace(r'[$,% ]', '', regex=True)
+                # Remove currency symbols, commas, percent signs, and whitespace
+                # This fixes " $ 1,200.00 " -> "1200.00"
+                clean_series = self.df[col].astype(str).str.replace(r'[$,%\s]', '', regex=True)
+                
+                # Strip any remaining non-numeric characters except decimals
+                clean_series = clean_series.str.replace(r'[^0-9.]', '', regex=True)
+                
+                # Attempt conversion
                 numeric_attempt = pd.to_numeric(clean_series, errors='coerce')
-                if numeric_attempt.notnull().mean() > 0.8:
+                
+                # HIGH THRESHOLD: If > 60% of data can be numeric, force it.
+                if numeric_attempt.notnull().mean() > 0.6:
                     self.df[col] = numeric_attempt
 
+        # 4. FINAL TYPE-SPECIFIC PROCESSING
+        for col in self.df.columns:
             if pd.api.types.is_numeric_dtype(self.df[col]):
+                # Fill NaNs with median to prevent math from returning 'NaN'
+                # This is critical for the AI's .mean() and .sum() calls
                 self.df[col] = self.df[col].fillna(self.df[col].median())
-                self.df[col] = self.df[col].clip(self.df[col].quantile(0.01), self.df[col].quantile(0.99))
+                
+                # Clip outliers to 1st and 99th percentile to prevent skewed math
+                self.df[col] = self.df[col].clip(
+                    self.df[col].quantile(0.01), 
+                    self.df[col].quantile(0.99)
+                )
             else:
-                self.df[col] = self.df[col].astype(str).str.strip().str.title().fillna("Unknown")
+                # Standardize categorical text
+                self.df[col] = self.df[col].astype(str).str.strip().str.title().replace("Nan", "Unknown").fillna("Unknown")
                 
         return self.df
 
@@ -50,6 +63,7 @@ class DataSanitizer:
             self.df[col] = self.df[col].apply(lambda x: re.sub(phone_regex, "[PHONE_REDACTED]", str(x)))
 
     def register_new_column(self, col_name, fingerprint):
+        """Registers AI-created columns into the system fingerprint for future use."""
         if col_name not in self.df.columns: return fingerprint
         fingerprint["columns"][col_name] = {
             "dtype": str(self.df[col_name].dtype),

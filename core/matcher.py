@@ -1,24 +1,28 @@
+# --- core/matcher.py ---
 from rapidfuzz import process, utils
 
 class FuzzyMatcher:
-    """
-    STAGE 1: Maps fuzzy user terms to exact column names.
-    Ensures 'sales' -> 'Total_Sales_2025' correctly.
-    """
-    def __init__(self, columns):
-        # Convert all columns to strings to prevent matching errors
-        self.columns = [str(c) for c in columns]
+    def __init__(self, columns, threshold=85): # Increased from 70 to 85
+        self.columns = columns
+        self.threshold = threshold
 
-    def find_best_match(self, user_term, threshold=70):
-        if not user_term or len(user_term) < 2:
+    def find_best_match(self, term):
+        """
+        Finds the closest actual column name for a user's search term.
+        Phase 3: High-threshold filtering to stop 'near-miss' hallucinations.
+        """
+        if not term or len(term) < 3: 
             return None
             
-        # Extract the single best match using Levenshtein distance
+        # Clean the term for better matching
+        clean_term = utils.default_process(term)
+        
         match = process.extractOne(
-            user_term, 
+            clean_term, 
             self.columns, 
-            processor=utils.default_process,
-            score_cutoff=threshold
+            processor=utils.default_process
         )
         
-        return match[0] if match else None
+        if match and match[1] >= self.threshold:
+            return match[0] # Return the actual technical column name
+        return None
